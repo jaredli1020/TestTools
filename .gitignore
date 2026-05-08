@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# 运行产物
+output/
+*.xlsx
+*.xmind
+*.log
+
+# 配置
+config.yaml
+.env
+
+# 本地 token
+.feishu_user_tokens.json
+
+# Web 任务检查点
+.task_checkpoints/

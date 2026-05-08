@@ -1,0 +1,40 @@
+# casecraft 配置示例
+# 复制为 config.yaml 并按需修改
+
+# LLM 配置
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  api_key: ""              # 或环境变量 ANTHROPIC_API_KEY
+  base_url: ""              # 可选，指向代理
+  max_tokens: 64000
+  temperature: 0.3
+
+# 飞书配置（仅在使用 FeishuDocSource / FeishuWebhookNotifier 时需要）
+feishu:
+  app_id: "your_app_id"
+  app_secret: "your_app_secret"
+
+# 项目配置（仅在使用代码分析时需要）
+projects:
+  my_project:
+    path: "/path/to/project"
+    type: php-laravel       # 业务分析器通过 type 分发
+    source: local           # local / gitlab
+    gitlab_path: ""         # GitLab 项目路径（远程模式）
+
+# GitLab 配置（可选，远程代码分析）
+gitlab:
+  url: "https://gitlab.example.com"
+  token: ""
+
+# 输出配置
+output:
+  default_format: excel     # excel / xmind / markdown / json
+  output_dir: "./output"
+
+# 通知配置
+notify:
+  enabled: false
+  webhook_url: ""           # 飞书群机器人 webhook
+  heartbeat_interval: 30    # 心跳间隔（秒）

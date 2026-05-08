@@ -1,0 +1,41 @@
+[project]
+name = "casecraft"
+version = "0.1.0"
+description = "需求驱动的测试用例自动生成框架"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.25.0",
+    "openpyxl>=3.1.0",
+    "pyyaml>=6.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "python-multipart",
+    "sse-starlette>=1.6.0",
+]
+feishu = [
+    "lark-oapi>=1.4.0",
+]
+ast = [
+    "tree-sitter>=0.20.0",
+]
+all = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "python-multipart",
+    "sse-starlette>=1.6.0",
+    "lark-oapi>=1.4.0",
+    "tree-sitter>=0.20.0",
+]
+
+[project.scripts]
+casecraft = "casecraft.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["casecraft*"]
