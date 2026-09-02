@@ -3,25 +3,72 @@
 
 # LLM 配置
 llm:
-  provider: anthropic
-  model: claude-sonnet-4-6
-  api_key: ""              # 或环境变量 ANTHROPIC_API_KEY
+  provider: openai          # openai / codex_cli
+  model: gpt-5.6             # codex_cli 模式使用 gpt-5.6-sol
+  api_key: ""              # 或环境变量 OPENAI_API_KEY
   base_url: ""              # 可选，指向代理
   max_tokens: 64000
-  temperature: 0.3
+  reasoning_effort: medium   # none / low / medium / high / xhigh / max
+  cli_path: codex            # provider=codex_cli 时使用
+  timeout: 900               # 生成超时秒数
 
 # 飞书配置（仅在使用 FeishuDocSource / FeishuWebhookNotifier 时需要）
 feishu:
   app_id: "your_app_id"
   app_secret: "your_app_secret"
 
-# 项目配置（仅在使用代码分析时需要）
+# 本地代码仓库。code_auto 会先识别需求归属，再同步并分析命中的仓库。
 projects:
-  my_project:
-    path: "/path/to/project"
-    type: php-laravel       # 业务分析器通过 type 分发
-    source: local           # local / gitlab
-    gitlab_path: ""         # GitLab 项目路径（远程模式）
+  code_auto:
+    label: "关联代码仓库（自动识别）"
+    description: "识别项目并验证当前分支已包含远程最新提交"
+    type: auto-local-git
+    source: local
+    candidates: [accomy-admin, accomy-h5, accomy-hotel, accomy-web]
+    default_candidate: accomy-web
+    strict: true
+    selectable: true
+
+  accomy-admin:
+    label: "运营管理后台 · accomy-admin"
+    type: local-git
+    framework: vue2-admin
+    path: "G:/accomy-admin"
+    routing_keywords: [管理后台, 运营后台, 后台管理, 管理员, admin, 白标, 系统设置]
+    sync: true
+    strict: true
+    selectable: true
+
+  accomy-h5:
+    label: "移动端 H5 · accomy-h5"
+    type: local-git
+    framework: vue3-h5
+    path: "G:/accomy-h5"
+    routing_keywords: [h5, 移动端, 手机端, 手机页面, 微信内, webview, vant]
+    sync: true
+    strict: true
+    selectable: true
+
+  accomy-hotel:
+    label: "后端服务 · accomy-hotel"
+    type: local-git
+    framework: java-spring-cloud
+    path: "G:/accomy-hotel"
+    routing_keywords: [后端, 服务端, 数据库, java, spring, 微服务, 网关, controller]
+    sync: true
+    sync_timeout: 300
+    strict: true
+    selectable: true
+
+  accomy-web:
+    label: "PC Web · accomy-web"
+    type: local-git
+    framework: nextjs-web
+    path: "G:/accomy-web"
+    routing_keywords: [pc端, web端, 网页端, 前台页面, 用户端, react, next.js]
+    sync: true
+    strict: true
+    selectable: true
 
 # GitLab 配置（可选，远程代码分析）
 gitlab:

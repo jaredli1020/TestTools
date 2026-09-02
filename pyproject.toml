@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "需求驱动的测试用例自动生成框架"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.25.0",
+    "openai>=1.66.0",
     "openpyxl>=3.1.0",
     "pyyaml>=6.0",
     "click>=8.1.0",
@@ -39,3 +39,6 @@ casecraft = "casecraft.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["casecraft*"]
+
+[tool.setuptools.package-data]
+"casecraft.web" = ["static/*"]

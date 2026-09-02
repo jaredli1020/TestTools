@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 from .core import registry
-from .sources import TextSource, FileSource
-from .analyzers import NoopAnalyzer
-from .generators import LLMCaseGenerator
+from .sources import FileSource, MongosoShareSource, TextSource
+from .analyzers import LocalGitAnalyzer, NoopAnalyzer
+from .generators import CodexCaseGenerator, LLMCaseGenerator
 from .exporters import ExcelExporter, XMindExporter, MarkdownExporter, JsonExporter
 from .notifiers import ConsoleNotifier
 
@@ -25,7 +25,7 @@ def bootstrap_defaults(
 
     Args:
         include_console_notifier: 是否注册控制台通知器（适合 CLI）
-        llm_generator: 是否注册 LLM 生成器（需要 anthropic SDK）
+        llm_generator: 是否注册 Codex 生成器（需要 OpenAI SDK）
     """
     global _bootstrapped
     if _bootstrapped:
@@ -33,14 +33,17 @@ def bootstrap_defaults(
 
     # Sources - text 放最后兜底
     registry.register_source(FileSource())
+    registry.register_source(MongosoShareSource())
     registry.register_source(TextSource())
 
-    # Analyzers - noop 放最后兜底
+    # Analyzers - 本地 Git 优先，noop 放最后兜底
+    registry.register_analyzer(LocalGitAnalyzer())
     registry.register_analyzer(NoopAnalyzer())
 
     # Generators
     if llm_generator:
-        registry.register_generator(LLMCaseGenerator(), default=True)
+        registry.register_generator(CodexCaseGenerator(), default=True)
+        registry.register_generator(LLMCaseGenerator())
 
     # Exporters
     registry.register_exporter(ExcelExporter())

@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="CaseCraft - 使用 Codex 将产品需求转换为可执行测试用例">
+  <title>CaseCraft · 测试用例工作台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css?v=20260828-link-source">
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="CaseCraft 首页">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>
+        <strong>CaseCraft</strong>
+        <small>TEST CASE STUDIO</small>
+      </span>
+    </a>
+    <div class="topbar-actions">
+      <span class="engine-badge" id="engineBadge">
+        <span class="pulse-dot"></span>
+        正在连接本地服务
+      </span>
+      <a class="ghost-link" href="/docs" target="_blank" rel="noreferrer">API 文档</a>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow"><span></span>AI-POWERED QA WORKSPACE</p>
+        <h1>把需求，变成<br><em>可执行的测试用例。</em></h1>
+      </div>
+      <p class="hero-copy">粘贴需求或载入本地文档，Codex 将自动覆盖主流程、异常、边界、安全与兼容性场景，并导出为团队常用格式。</p>
+    </section>
+
+    <section class="workspace-grid">
+      <article class="panel builder-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step-number">01</span>
+            <div>
+              <h2>输入需求</h2>
+              <p>描述功能、验收标准和业务约束</p>
+            </div>
+          </div>
+          <div class="segmented" role="tablist" aria-label="需求输入方式">
+            <button type="button" class="segment" data-source-mode="link" role="tab" aria-selected="false">需求链接</button>
+            <button type="button" class="segment active" data-source-mode="text" role="tab" aria-selected="true">需求文本</button>
+            <button type="button" class="segment" data-source-mode="path" role="tab" aria-selected="false">本地路径</button>
+          </div>
+        </div>
+
+        <form id="generateForm">
+          <div id="textSourcePanel" class="source-panel">
+            <label class="sr-only" for="sourceText">需求内容</label>
+            <textarea id="sourceText" rows="12" placeholder="例如：&#10;用户可以通过手机号和验证码登录。验证码 60 秒内有效，连续输错 5 次后锁定 10 分钟……" spellcheck="false"></textarea>
+            <div class="editor-toolbar">
+              <span id="charCount">0 字</span>
+              <div>
+                <input id="fileInput" type="file" accept=".txt,.md,.markdown,.json,.rst" hidden>
+                <button class="text-button" id="importButton" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12 4 4m-4-4L8 7M5 14v5h14v-5"/></svg>
+                  载入文档
+                </button>
+                <button class="text-button" id="exampleButton" type="button">填入示例</button>
+              </div>
+            </div>
+            <div class="file-note" id="fileNote" hidden></div>
+          </div>
+
+          <div id="linkSourcePanel" class="source-panel" hidden>
+            <div class="link-source-intro">
+              <span class="link-source-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>
+              </span>
+              <div>
+                <strong>从需求分享链接读取</strong>
+                <p>后台提取需求编号、标题、正文、关联信息和内嵌图片。</p>
+              </div>
+            </div>
+            <label class="field-label" for="sourceLink">Mongoso 需求分享链接</label>
+            <div class="link-input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>
+              <input id="sourceLink" type="url" placeholder="https://max.mongoso.com/share?itemid=T749nod" autocomplete="url" spellcheck="false">
+            </div>
+            <div class="link-source-note">
+              <span></span>
+              <p><strong>支持分享链接</strong> 请在 MAX 需求详情中复制分享地址；普通 <code>/layout</code> 地址无法唯一定位需求。</p>
+            </div>
+          </div>
+
+          <div id="pathSourcePanel" class="source-panel" hidden>
+            <label class="field-label" for="sourcePath">需求文件绝对路径</label>
+            <div class="path-input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v10H3z"/></svg>
+              <input id="sourcePath" type="text" placeholder="G:\项目\requirements\login.md" autocomplete="off">
+            </div>
+            <p class="field-hint">支持 .md、.txt、.json、.markdown 和 .rst；路径由运行 CaseCraft 的本机读取。</p>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="form-section-heading">
+            <span class="step-number">02</span>
+            <div>
+              <h2>生成配置</h2>
+              <p>选择输出格式与可选的代码上下文</p>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <div class="field-group">
+              <label class="field-label" for="projectSelect">关联项目</label>
+              <select id="projectSelect">
+                <option value="">不关联代码仓库</option>
+              </select>
+              <p class="project-help" id="projectHelp" hidden></p>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="creatorInput">创建人</label>
+              <input id="creatorInput" type="text" value="casecraft" maxlength="40">
+            </div>
+          </div>
+
+          <fieldset class="format-fieldset">
+            <legend class="field-label">导出格式</legend>
+            <div class="format-options" id="formatOptions">
+              <span class="skeleton-line"></span>
+            </div>
+          </fieldset>
+
+          <details class="advanced-options">
+            <summary>
+              <span>高级配置</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+            </summary>
+            <div class="advanced-content">
+              <div class="form-grid">
+                <div class="field-group">
+                  <label class="field-label" for="sectionInput">文档章节</label>
+                  <input id="sectionInput" type="text" placeholder="仅处理指定 Markdown 标题">
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="branchInput">代码分支</label>
+                  <input id="branchInput" type="text" placeholder="默认使用项目配置">
+                </div>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="extraPrompt">补充生成要求</label>
+                <textarea id="extraPrompt" rows="3" placeholder="例如：重点覆盖权限越权、重复提交和弱网场景"></textarea>
+              </div>
+              <label class="switch-row">
+                <span>
+                  <strong>跳过代码分析</strong>
+                  <small>只根据需求文本生成测试用例</small>
+                </span>
+                <input id="skipCodeInput" type="checkbox">
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+            </div>
+          </details>
+
+          <button class="primary-button" id="generateButton" type="submit">
+            <span class="button-copy">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-8 12h7l-1 8 8-12h-7z"/></svg>
+              <span>用 Codex 生成测试用例</span>
+            </span>
+            <span class="button-loader" aria-hidden="true"></span>
+          </button>
+          <p class="submit-hint">任务将在本机执行，生成期间可以保留此页面查看实时进度。</p>
+        </form>
+      </article>
+
+      <aside class="panel activity-panel">
+        <div class="panel-heading compact">
+          <div>
+            <span class="step-number">03</span>
+            <div>
+              <h2>生成进度</h2>
+              <p id="activitySubtitle">等待提交新任务</p>
+            </div>
+          </div>
+          <span class="status-pill idle" id="statusPill">空闲</span>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+          <div class="orbital" aria-hidden="true">
+            <span class="orbit orbit-one"></span>
+            <span class="orbit orbit-two"></span>
+            <span class="orb-core"><i></i></span>
+          </div>
+          <h3>准备开始</h3>
+          <p>提交需求后，这里会实时展示解析、分析、生成和导出进度。</p>
+        </div>
+
+        <div class="task-state" id="taskState" hidden>
+          <div class="progress-overview">
+            <div class="progress-ring" id="progressRing" style="--progress: 0">
+              <span><strong id="progressValue">0</strong><small>%</small></span>
+            </div>
+            <div class="progress-copy">
+              <span class="mono-label" id="taskIdLabel">TASK</span>
+              <h3 id="stageLabel">等待执行</h3>
+              <p id="taskSourceLabel">—</p>
+            </div>
+          </div>
+
+          <div class="repository-card" id="repositoryCard" hidden>
+            <div class="repository-card-head">
+              <span class="repo-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M7 3v12m0-8h8a2 2 0 0 1 2 2v2M7 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 12a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10-4a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
+              </span>
+              <div><strong id="repositoryName">代码仓库</strong><small id="repositoryFramework">等待识别</small></div>
+              <span class="verified-tag" id="repositoryVerified">已验证最新</span>
+            </div>
+            <dl class="repository-meta">
+              <div><dt>当前分支</dt><dd id="repositoryBranch">—</dd></div>
+              <div><dt>提交</dt><dd id="repositoryCommit">—</dd></div>
+              <div><dt>相关文件</dt><dd id="repositoryFiles">—</dd></div>
+              <div><dt>识别置信度</dt><dd id="repositoryConfidence">—</dd></div>
+            </dl>
+          </div>
+
+          <ol class="pipeline-steps" id="pipelineSteps">
+            <li data-threshold="15"><span>1</span><div><strong>解析需求</strong><small>识别业务规则与验收标准</small></div><i></i></li>
+            <li data-threshold="25"><span>2</span><div><strong>关联代码</strong><small>识别项目、同步分支并提取实现</small></div><i></i></li>
+            <li data-threshold="68"><span>3</span><div><strong>Codex 生成</strong><small>融合需求和代码补充测试场景</small></div><i></i></li>
+            <li data-threshold="92"><span>4</span><div><strong>整理导出</strong><small>生成所选格式文件</small></div><i></i></li>
+          </ol>
+
+          <div class="error-box" id="errorBox" hidden>
+            <strong>任务未完成</strong>
+            <p id="errorMessage"></p>
+          </div>
+
+          <div class="completion-card" id="completionCard" hidden>
+            <div class="completion-top">
+              <div class="success-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></div>
+              <div><strong>用例已生成</strong><span id="completionMeta">—</span></div>
+            </div>
+            <div class="download-actions" id="downloadActions"></div>
+          </div>
+        </div>
+
+        <div class="engine-card">
+          <div><span class="engine-icon">C</span><div><strong id="engineName">Codex</strong><small id="engineDetails">读取配置中</small></div></div>
+          <span class="local-tag">LOCAL</span>
+        </div>
+      </aside>
+    </section>
+
+    <section class="results-section" id="resultsSection" hidden>
+      <div class="section-title-row">
+        <div>
+          <p class="eyebrow"><span></span>GENERATED COVERAGE</p>
+          <h2>测试用例结果</h2>
+        </div>
+        <span class="case-total"><strong id="caseTotal">0</strong> 条用例</span>
+      </div>
+      <div class="stats-grid" id="statsGrid"></div>
+      <div class="case-table-wrap">
+        <table class="case-table">
+          <thead><tr><th>#</th><th>模块 / 用例标题</th><th>优先级</th><th>用例类型</th><th>操作步骤</th><th>预期结果</th></tr></thead>
+          <tbody id="caseTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="history-section">
+      <div class="section-title-row">
+        <div>
+          <p class="eyebrow"><span></span>RECENT RUNS</p>
+          <h2>最近任务</h2>
+        </div>
+        <button class="refresh-button" id="refreshButton" type="button" aria-label="刷新任务列表">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          刷新
+        </button>
+      </div>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">暂无生成记录</div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js?v=20260828-link-source" defer></script>
+</body>
+</html>

@@ -27,6 +27,23 @@ DEFAULT_CN_EN_MAP = {
     "数据": ["Data", "data"],
     "任务": ["Task", "task", "Job"],
     "报表": ["Report", "report", "Statistics"],
+    "酒店": ["Hotel", "hotel"],
+    "机票": ["Flight", "flight", "AirTicket"],
+    "预订": ["Booking", "booking", "Reserve"],
+    "退款": ["Refund", "refund"],
+    "退订": ["Cancel", "cancel"],
+    "入住": ["CheckIn", "checkin"],
+    "退房": ["CheckOut", "checkout"],
+    "收藏": ["Favorite", "favorite", "Collect"],
+    "审批": ["Approval", "approval", "Audit"],
+    "财务": ["Finance", "finance", "Billing"],
+    "员工": ["Employee", "employee", "Guest"],
+    "客户": ["Client", "client", "Customer"],
+    "账单": ["Bill", "bill", "Billing"],
+    "发票": ["Invoice", "invoice"],
+    "黑名单": ["Blacklist", "blacklist"],
+    "搜索": ["Search", "search"],
+    "优惠": ["Discount", "discount", "Coupon"],
 }
 
 

@@ -3,6 +3,7 @@
 内置插件：
 - TextSource：直接传入的文本
 - FileSource：本地文件（.md / .txt / .json）
+- MongosoShareSource：Mongoso MAX 需求分享链接
 
 可选插件（需要对应依赖）：
 - feishu.FeishuDocSource：飞书文档（需要 lark-oapi）
@@ -10,5 +11,6 @@
 
 from .text import TextSource
 from .file import FileSource
+from .mongoso import MongosoShareSource
 
-__all__ = ["TextSource", "FileSource"]
+__all__ = ["TextSource", "FileSource", "MongosoShareSource"]

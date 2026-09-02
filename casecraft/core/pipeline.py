@@ -104,6 +104,8 @@ class Pipeline:
             ctx = analyzer.analyze(requirement, project_with_key, branch=branch, **kwargs)
         except Exception as e:
             self._emit_error("analyze", e)
+            if project.get("strict", False):
+                raise
             ctx = CodeContext(project_key=project_key, project_type=project.get("type", ""))
         finally:
             self._emit_stage_end("analyze", elapsed=time.time() - t0)

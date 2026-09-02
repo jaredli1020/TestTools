@@ -9,11 +9,12 @@
 - **插件化**：Source / Analyzer / Generator / Exporter / Notifier 都是插件，注册即用
 - **需求源**：文本、本地文件、飞书文档（可选）
 - **代码分析**：抽象接口 + 占位实现，业务自己写语言特定分析器
-- **LLM 生成**：内置 Anthropic 实现，支持两阶段策略（需求 + 代码分析）
+- **本地仓库关联**：自动识别需求所属仓库，安全同步当前分支并提取相关代码
+- **LLM 生成**：内置 OpenAI/Codex 实现，支持两阶段策略（需求 + 代码分析）
 - **多格式导出**：Excel（带样式）、XMind、Markdown、JSON
 - **通知集成**：飞书群机器人 webhook + 心跳检测
 - **Git Diff 回归**：基于 git diff 定位变更并生成回归用例
-- **CLI + Web**：click CLI、FastAPI + SSE Web 骨架
+- **CLI + Web**：click CLI、FastAPI + SSE、本地可视化工作台
 - **GitLab 远程**：从 GitLab 拉取代码，无需本地 clone
 
 ## 目录结构
@@ -35,7 +36,7 @@ casecraft_framework/
 │   │   ├── noop.py          # 占位实现
 │   │   └── utils.py         # 关键词提取、文件遍历
 │   ├── generators/          # 用例生成器插件
-│   │   └── llm.py           # Anthropic API 生成器
+│   │   └── llm.py           # OpenAI Responses API / Codex 生成器
 │   ├── exporters/           # 导出器插件
 │   │   ├── excel.py
 │   │   ├── xmind.py
@@ -125,8 +126,37 @@ pip install -e ".[web,feishu]"
 ```bash
 cp config.yaml.example config.yaml
 # 编辑 config.yaml，至少配置 llm.api_key 或设置环境变量
-export ANTHROPIC_API_KEY="..."
+export OPENAI_API_KEY="..."
 ```
+
+Windows PowerShell：
+
+```powershell
+$env:OPENAI_API_KEY = "..."
+```
+
+默认生成器通过 OpenAI Responses API 调用 `gpt-5.6`，并使用 Structured Outputs
+保证输出符合测试用例字段结构。可在 `config.yaml` 中调整模型和推理强度：
+
+```yaml
+llm:
+  provider: openai
+  model: gpt-5.6
+  reasoning_effort: medium
+```
+
+如需复用本机 Codex CLI 已保存的登录而不配置 API Key，可切换为 CLI 模式：
+
+```yaml
+llm:
+  provider: codex_cli
+  model: gpt-5.6-sol
+  cli_path: C:/Users/test/AppData/Roaming/npm/codex.cmd
+  timeout: 900
+```
+
+CLI 模式要求 `codex exec --help` 能在运行 Web 服务的同一用户环境中成功执行。
+它只复用 Codex CLI 的认证，不会读取或续接 Codex 桌面应用中的当前对话。
 
 ### CLI
 
@@ -152,6 +182,25 @@ casecraft diff -p my_project -r HEAD~3
 # 启动 Web 服务
 casecraft web --port 8001
 ```
+
+启动后访问 `http://127.0.0.1:8001`，即可在页面中录入需求、选择导出格式、
+查看 Codex 实时生成进度、预览测试用例并下载结果。Windows 也可以直接双击
+项目根目录的 `start-web.cmd`。
+
+### 关联代码仓库
+
+“关联项目”选择“关联代码仓库（自动识别）”后，执行顺序为：
+
+1. 根据需求中的端类型、技术特征和四个仓库的代码路径识别所属项目；
+2. 检查命中仓库的当前分支和上游分支；
+3. 执行 `git fetch --prune` 获取远程最新状态；
+4. 当前分支落后且工作区干净时，只执行 `git merge --ff-only`；
+5. 验证当前 `HEAD` 已包含上游最新提交；
+6. 从 Git 已跟踪的安全源文件中提取与需求相关的实现，再与需求一起交给 Codex。
+
+为保护本地工作，程序不会自动切分支、stash、reset 或处理分叉历史。仓库存在可能
+被更新覆盖的未提交改动、没有上游分支、处于 detached HEAD，或本地与远程已经分叉时，
+任务会停止并显示原因。也可以在下拉框中手动指定四个仓库之一，用于覆盖自动识别结果。
 
 ### 程序化调用
 
@@ -275,18 +324,25 @@ class CustomPipeline(Pipeline):
 
 ## Web 界面
 
-`casecraft web` 启动 FastAPI + SSE 骨架，默认接口：
+`casecraft web` 启动完整的本地工作台。页面不依赖外部 CDN，支持直接输入
+需求文本、在浏览器中载入本地文档、输入本机绝对路径，以及粘贴
+`https://max.mongoso.com/share?itemid=...` 形式的 Mongoso MAX 需求分享链接。
+分享链接由后端只读接口静默提取需求编号、标题、正文、元数据和内嵌图片，
+普通 `/layout` 地址不能唯一定位需求。任务状态保存在 `.task_checkpoints/`，
+服务重启后仍能查看已经完成的任务。
+
+默认接口：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET  | `/api/health` | 本地服务健康状态 |
 | GET  | `/api/config` | 配置 / projects / 可用格式 |
 | POST | `/api/generate` | 提交生成任务 |
 | GET  | `/api/tasks/{id}` | 任务状态 |
 | GET  | `/api/tasks/{id}/stream` | SSE 进度推送 |
 | GET  | `/api/tasks` | 历史任务 |
 | GET  | `/api/tasks/{id}/download/{fmt}` | 下载输出 |
-
-业务项目需要 UI 界面时，自行写前端 HTML 放到 `static/` 或直接集成 React/Vue。
+| DELETE | `/api/tasks/{id}` | 删除任务记录（不删除导出文件） |
 
 ## 约定
 

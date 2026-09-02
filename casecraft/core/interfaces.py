@@ -43,7 +43,7 @@ class CodeAnalyzer(ABC):
 class CaseGenerator(ABC):
     """用例生成器插件 - 基于 Requirement + CodeContext 生成测试用例
 
-    框架内置 LLMCaseGenerator，业务可以实现其他 Generator（如规则生成、
+    框架内置 CodexCaseGenerator，业务可以实现其他 Generator（如规则生成、
     历史用例复用等）。
     """
 

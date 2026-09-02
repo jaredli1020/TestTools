@@ -16,12 +16,14 @@ import yaml
 
 @dataclass
 class LLMConfig:
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-6"
+    provider: str = "openai"
+    model: str = "gpt-5.6"
     api_key: str = ""
     base_url: str = ""
     max_tokens: int = 64000
-    temperature: float = 0.3
+    reasoning_effort: str = "medium"
+    cli_path: str = "codex"
+    timeout: int = 900
 
 
 @dataclass
@@ -55,12 +57,14 @@ class Config:
 
         return cls(
             llm=LLMConfig(
-                provider=llm_cfg.get("provider", "anthropic"),
-                model=llm_cfg.get("model", "claude-sonnet-4-6"),
+                provider=llm_cfg.get("provider", "openai"),
+                model=llm_cfg.get("model", "gpt-5.6"),
                 api_key=llm_cfg.get("api_key", ""),
                 base_url=llm_cfg.get("base_url", ""),
                 max_tokens=llm_cfg.get("max_tokens", 64000),
-                temperature=llm_cfg.get("temperature", 0.3),
+                reasoning_effort=llm_cfg.get("reasoning_effort", "medium"),
+                cli_path=llm_cfg.get("cli_path", "codex"),
+                timeout=int(llm_cfg.get("timeout", 900)),
             ),
             output=OutputConfig(
                 default_format=output_cfg.get("default_format", "excel"),
@@ -108,10 +112,10 @@ def load_config(path: str | None = None) -> Config:
 
     # 环境变量覆盖
     data.setdefault("llm", {})
-    if os.getenv("ANTHROPIC_API_KEY"):
-        data["llm"]["api_key"] = os.getenv("ANTHROPIC_API_KEY")
-    if os.getenv("ANTHROPIC_BASE_URL"):
-        data["llm"]["base_url"] = os.getenv("ANTHROPIC_BASE_URL")
+    if os.getenv("OPENAI_API_KEY"):
+        data["llm"]["api_key"] = os.getenv("OPENAI_API_KEY")
+    if os.getenv("OPENAI_BASE_URL"):
+        data["llm"]["base_url"] = os.getenv("OPENAI_BASE_URL")
 
     _config = Config.from_dict(data)
     return _config
