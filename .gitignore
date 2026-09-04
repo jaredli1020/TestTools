@@ -26,3 +26,6 @@ config.yaml
 
 # Web 任务检查点
 .task_checkpoints/
+
+# 浏览器选择的本地需求文件（仅本机运行时使用）
+.uploaded_requirements/

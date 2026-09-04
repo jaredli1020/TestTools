@@ -75,13 +75,21 @@ class Pipeline:
     # ---------- 管道阶段 ----------
 
     def parse_requirement(self, source: str, section: str | None = None, **kwargs) -> Requirement:
-        source_impl = self.registry.find_source(source)
+        mode = kwargs.pop("source_mode", None)
+        if mode:
+            source_name = {"path": "file", "text": "text", "link": "mongoso_share"}.get(mode)
+            source_impl = next((item for item in self.registry.sources if item.name == source_name), None)
+            if not source_impl:
+                raise ValueError(f"未注册需求输入类型: {mode}")
+        else:
+            source_impl = self.registry.find_source(source)
         t0 = time.time()
         self._emit_stage_start("parse", source=source)
+        req = None
         try:
             req = source_impl.parse(source, section=section, **kwargs)
         finally:
-            self._emit_stage_end("parse", elapsed=time.time() - t0)
+            self._emit_stage_end("parse", elapsed=time.time() - t0, success=req is not None, requirement=req)
         return req
 
     def analyze_code(self, requirement: Requirement, project_key: str | None = None,
@@ -100,15 +108,17 @@ class Pipeline:
 
         t0 = time.time()
         self._emit_stage_start("analyze", project=project_key, branch=branch)
+        succeeded = False
         try:
             ctx = analyzer.analyze(requirement, project_with_key, branch=branch, **kwargs)
+            succeeded = True
         except Exception as e:
             self._emit_error("analyze", e)
             if project.get("strict", False):
                 raise
             ctx = CodeContext(project_key=project_key, project_type=project.get("type", ""))
         finally:
-            self._emit_stage_end("analyze", elapsed=time.time() - t0)
+            self._emit_stage_end("analyze", elapsed=time.time() - t0, success=succeeded)
         return ctx
 
     def generate(self, requirement: Requirement, code_context: CodeContext | None = None,
@@ -116,10 +126,12 @@ class Pipeline:
         gen = self.registry.get_generator(generator_name)
         t0 = time.time()
         self._emit_stage_start("generate", generator=gen.name)
+        succeeded = False
         try:
             cases = gen.generate(requirement, code_context, extra_prompt=extra_prompt, **kwargs)
+            succeeded = True
         finally:
-            self._emit_stage_end("generate", elapsed=time.time() - t0)
+            self._emit_stage_end("generate", elapsed=time.time() - t0, success=succeeded)
         return cases
 
     def export(self, cases: list[TestCase], formats: list[str] | str,
@@ -132,6 +144,7 @@ class Pipeline:
         t0 = time.time()
         self._emit_stage_start("export", formats=formats)
         paths: list[str] = []
+        succeeded = False
         try:
             for fmt in formats:
                 exporter = self.registry.get_exporter(fmt)
@@ -142,8 +155,9 @@ class Pipeline:
                     **kwargs,
                 )
                 paths.append(os.path.abspath(path))
+            succeeded = True
         finally:
-            self._emit_stage_end("export", elapsed=time.time() - t0)
+            self._emit_stage_end("export", elapsed=time.time() - t0, success=succeeded)
         return paths
 
     # ---------- 一站式调用 ----------
@@ -154,6 +168,7 @@ class Pipeline:
             formats: list[str] | str = "excel", output_path: str | None = None,
             task_name: str = "",
             skip_code: bool = False,
+            source_mode: str | None = None,
             **kwargs) -> PipelineResult:
         """执行完整管道"""
         result = PipelineResult()
@@ -174,7 +189,7 @@ class Pipeline:
             # 1. 解析需求
             stage_t0 = time.time()
             monitor.update_stage("解析需求")
-            req = self.parse_requirement(source, section=section)
+            req = self.parse_requirement(source, section=section, source_mode=source_mode)
             result.requirement = req
             result.timings["parse"] = round(time.time() - stage_t0, 2)
 
@@ -187,6 +202,7 @@ class Pipeline:
                 result.timings["analyze"] = round(time.time() - stage_t0, 2)
             else:
                 result.code_context = CodeContext()
+                self._emit_stage_end("analyze", success=True, skipped=True, elapsed=0)
 
             # 3. 生成用例
             stage_t0 = time.time()

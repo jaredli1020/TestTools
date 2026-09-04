@@ -2,8 +2,10 @@
 
 import os
 import json
+from pathlib import Path
 
 from casecraft.core import RequirementSource, Requirement
+from .titles import extract_requirement_title
 
 
 class FileSource(RequirementSource):
@@ -13,33 +15,50 @@ class FileSource(RequirementSource):
     def match(self, source: str) -> bool:
         if not isinstance(source, str):
             return False
-        if not os.path.isfile(source):
+        try:
+            self.resolve_path(source)
+        except (ValueError, OSError):
             return False
-        ext = os.path.splitext(source)[1].lower()
-        return ext in self.SUPPORTED_EXTS
+        return True
+
+    @classmethod
+    def resolve_path(cls, source: str) -> Path:
+        """Resolve only an exact file or a unique supported-extension match."""
+        path = Path(source.strip().strip('"\''))
+        if path.is_dir():
+            raise ValueError("请选择需求文件，不能使用文件夹路径。")
+        if path.is_file():
+            if path.suffix.lower() not in cls.SUPPORTED_EXTS:
+                raise ValueError("不支持该文件类型，请使用 .md、.txt、.json、.markdown 或 .rst 文件。")
+            return path.resolve()
+        if not path.suffix:
+            matches = [Path(str(path) + ext) for ext in sorted(cls.SUPPORTED_EXTS)]
+            matches = [candidate for candidate in matches if candidate.is_file()]
+            if len(matches) == 1:
+                return matches[0].resolve()
+            if len(matches) > 1:
+                raise ValueError("找到多个同名需求文件，请填写包含扩展名的完整路径。")
+        raise ValueError("需求文件不存在，请检查路径及扩展名（例如 .md）。不会将文件路径当作需求正文生成用例。")
 
     def parse(self, source: str, *, section: str | None = None, **kwargs) -> Requirement:
-        with open(source, "r", encoding="utf-8") as f:
+        source = str(self.resolve_path(source))
+        with open(source, "r", encoding="utf-8-sig") as f:
             raw = f.read()
 
+        title = kwargs.get("title") or extract_requirement_title(
+            raw, fallback=os.path.splitext(os.path.basename(source))[0]
+        )
         ext = os.path.splitext(source)[1].lower()
         if ext == ".json":
             try:
                 data = json.loads(raw)
-                content = data.get("content") or data.get("description") or json.dumps(data, ensure_ascii=False, indent=2)
-                title = data.get("title") or os.path.basename(source)
+                content = (data.get("content") or data.get("description")) if isinstance(data, dict) else None
+                if not isinstance(content, str) or not content:
+                    content = json.dumps(data, ensure_ascii=False, indent=2)
             except json.JSONDecodeError:
                 content = raw
-                title = os.path.basename(source)
         else:
             content = raw
-            # 从 markdown 首行 h1 提取标题
-            title = os.path.basename(source)
-            for line in raw.splitlines()[:5]:
-                stripped = line.strip()
-                if stripped.startswith("# "):
-                    title = stripped[2:].strip()
-                    break
 
         # section 过滤（按 markdown 标题切片）
         if section:

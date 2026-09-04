@@ -6,7 +6,7 @@
   <meta name="description" content="CaseCraft - 使用 Codex 将产品需求转换为可执行测试用例">
   <title>CaseCraft · 测试用例工作台</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20260828-link-source">
+  <link rel="stylesheet" href="/static/styles.css?v=20260903-horizontal-progress">
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -39,7 +39,7 @@
     </section>
 
     <section class="workspace-grid">
-      <article class="panel builder-panel">
+      <article class="panel builder-panel" id="builderPanel">
         <div class="panel-heading">
           <div>
             <span class="step-number">01</span>
@@ -49,14 +49,14 @@
             </div>
           </div>
           <div class="segmented" role="tablist" aria-label="需求输入方式">
-            <button type="button" class="segment" data-source-mode="link" role="tab" aria-selected="false">需求链接</button>
-            <button type="button" class="segment active" data-source-mode="text" role="tab" aria-selected="true">需求文本</button>
+            <button type="button" class="segment active" data-source-mode="link" role="tab" aria-selected="true">需求链接</button>
+            <button type="button" class="segment" data-source-mode="text" role="tab" aria-selected="false">需求文本</button>
             <button type="button" class="segment" data-source-mode="path" role="tab" aria-selected="false">本地路径</button>
           </div>
         </div>
 
         <form id="generateForm">
-          <div id="textSourcePanel" class="source-panel">
+          <div id="textSourcePanel" class="source-panel" hidden>
             <label class="sr-only" for="sourceText">需求内容</label>
             <textarea id="sourceText" rows="12" placeholder="例如：&#10;用户可以通过手机号和验证码登录。验证码 60 秒内有效，连续输错 5 次后锁定 10 分钟……" spellcheck="false"></textarea>
             <div class="editor-toolbar">
@@ -73,7 +73,7 @@
             <div class="file-note" id="fileNote" hidden></div>
           </div>
 
-          <div id="linkSourcePanel" class="source-panel" hidden>
+          <div id="linkSourcePanel" class="source-panel">
             <div class="link-source-intro">
               <span class="link-source-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>
@@ -97,10 +97,13 @@
           <div id="pathSourcePanel" class="source-panel" hidden>
             <label class="field-label" for="sourcePath">需求文件绝对路径</label>
             <div class="path-input-wrap">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v10H3z"/></svg>
+              <input id="pathFileInput" type="file" accept=".md,.txt,.json,.markdown,.rst,text/markdown,text/plain,application/json" hidden>
+              <button class="path-picker" id="pathPickerButton" type="button" aria-label="选择本地需求文件" title="选择本地需求文件">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v10H3z"/></svg>
+              </button>
               <input id="sourcePath" type="text" placeholder="G:\项目\requirements\login.md" autocomplete="off">
             </div>
-            <p class="field-hint">支持 .md、.txt、.json、.markdown 和 .rst；路径由运行 CaseCraft 的本机读取。</p>
+            <p class="field-hint">点击文件夹可选择并上传需求文件；也支持直接填写本机路径。支持 .md、.txt、.json、.markdown 和 .rst，单个文件不超过 2 MB。</p>
           </div>
 
           <div class="divider"></div>
@@ -198,7 +201,7 @@
           <p>提交需求后，这里会实时展示解析、分析、生成和导出进度。</p>
         </div>
 
-        <div class="task-state" id="taskState" hidden>
+        <div class="task-state" id="taskState" aria-busy="false" hidden>
           <div class="progress-overview">
             <div class="progress-ring" id="progressRing" style="--progress: 0">
               <span><strong id="progressValue">0</strong><small>%</small></span>
@@ -208,6 +211,22 @@
               <h3 id="stageLabel">等待执行</h3>
               <p id="taskSourceLabel">—</p>
             </div>
+          </div>
+
+          <div class="pipeline-progress">
+            <div class="pipeline-caption" role="status" aria-live="polite">
+              <strong id="currentStepLabel">等待开始</strong>
+              <span id="progressHint">按实际执行阶段更新</span>
+            </div>
+            <div class="progress-track" id="overallProgress" role="progressbar" aria-label="任务阶段进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span></span>
+            </div>
+            <ol class="pipeline-steps" id="pipelineSteps" aria-label="用例生成步骤">
+              <li data-stage="parse"><span class="step-index">1</span><div><strong>解析需求</strong><small>读取正文与验收标准</small></div><em class="step-status">待开始</em></li>
+              <li data-stage="analyze"><span class="step-index">2</span><div><strong>关联代码</strong><small>识别项目并检查最新代码</small></div><em class="step-status">待开始</em></li>
+              <li data-stage="generate"><span class="step-index">3</span><div><strong>Codex 生成</strong><small>结合需求生成测试场景</small></div><em class="step-status">待开始</em></li>
+              <li data-stage="export"><span class="step-index">4</span><div><strong>整理导出</strong><small>生成所选格式文件</small></div><em class="step-status">待开始</em></li>
+            </ol>
           </div>
 
           <div class="repository-card" id="repositoryCard" hidden>
@@ -226,12 +245,7 @@
             </dl>
           </div>
 
-          <ol class="pipeline-steps" id="pipelineSteps">
-            <li data-threshold="15"><span>1</span><div><strong>解析需求</strong><small>识别业务规则与验收标准</small></div><i></i></li>
-            <li data-threshold="25"><span>2</span><div><strong>关联代码</strong><small>识别项目、同步分支并提取实现</small></div><i></i></li>
-            <li data-threshold="68"><span>3</span><div><strong>Codex 生成</strong><small>融合需求和代码补充测试场景</small></div><i></i></li>
-            <li data-threshold="92"><span>4</span><div><strong>整理导出</strong><small>生成所选格式文件</small></div><i></i></li>
-          </ol>
+          <div class="task-warning" id="taskWarning" role="note" hidden></div>
 
           <div class="error-box" id="errorBox" hidden>
             <strong>任务未完成</strong>
@@ -269,6 +283,13 @@
           <tbody id="caseTableBody"></tbody>
         </table>
       </div>
+      <div class="results-actions" id="resultsActions" hidden>
+        <span id="resultsVisibleCount">已展示 0 / 0 条</span>
+        <button class="results-toggle" id="toggleResultsButton" type="button" aria-expanded="false">
+          <span id="toggleResultsLabel">展示更多</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+        </button>
+      </div>
     </section>
 
     <section class="history-section">
@@ -289,6 +310,6 @@
   </main>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js?v=20260828-link-source" defer></script>
+  <script src="/static/app.js?v=20260903-horizontal-progress" defer></script>
 </body>
 </html>

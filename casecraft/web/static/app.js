@@ -5,19 +5,35 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const state = {
   config: null,
-  sourceMode: "text",
+  sourceMode: "link",
+  formRevision: 0,
+  resetAfterTask: null,
+  selectionVersion: 0,
   activeTask: null,
+  resultsTaskId: null,
+  resultsExpanded: false,
   tasks: [],
   stream: null,
   pollTimer: null,
   toastTimer: null,
 };
 
+const DEFAULT_VISIBLE_CASES = 5;
+
 const formatLabels = {
   excel: "Excel",
   xmind: "XMind",
   markdown: "Markdown",
   json: "JSON",
+};
+
+const reasoningEffortLabels = {
+  none: "无",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+  max: "最大",
 };
 
 const statusLabels = {
@@ -36,12 +52,9 @@ async function init() {
   try {
     state.config = await apiRequest("/api/config");
     renderConfig();
+    resetGenerationForm();
     await refreshTasks(true);
     setServiceState(true);
-
-    if (state.tasks.length) {
-      await selectTask(state.tasks[0].id, false);
-    }
   } catch (error) {
     setServiceState(false);
     showToast(error.message || "无法连接 CaseCraft 本地服务", true);
@@ -49,6 +62,12 @@ async function init() {
 }
 
 function bindEvents() {
+  // Track edits so a finishing background task cannot erase the next draft.
+  for (const eventName of ["input", "change"]) {
+    $("#generateForm").addEventListener(eventName, (event) => {
+      if (event.target !== $("#fileInput")) state.formRevision += 1;
+    });
+  }
   $$("[data-source-mode]").forEach((button) => {
     button.addEventListener("click", () => setSourceMode(button.dataset.sourceMode));
   });
@@ -59,10 +78,21 @@ function bindEvents() {
     const [file] = event.target.files;
     if (file) await loadLocalDocument(file);
   });
+  $("#pathPickerButton").addEventListener("click", () => $("#pathFileInput").click());
+  $("#pathFileInput").addEventListener("change", async (event) => {
+    const [file] = event.target.files;
+    event.target.value = "";
+    if (file) await uploadPathDocument(file);
+  });
+  $("#sourcePath").addEventListener("input", () => {
+    delete $("#sourcePath").dataset.uploadSource;
+    delete $("#sourcePath").dataset.uploadName;
+  });
   $("#exampleButton").addEventListener("click", fillExample);
   $("#projectSelect").addEventListener("change", renderProjectSelection);
   $("#generateForm").addEventListener("submit", submitGeneration);
   $("#refreshButton").addEventListener("click", () => refreshTasks());
+  $("#toggleResultsButton").addEventListener("click", toggleResultsExpansion);
 
   $("#historyList").addEventListener("click", async (event) => {
     const deleteButton = event.target.closest("[data-delete-task]");
@@ -83,7 +113,9 @@ function bindEvents() {
   });
 }
 
-function setSourceMode(mode) {
+function setSourceMode(mode, { focus = true } = {}) {
+  if (!["link", "text", "path"].includes(mode)) mode = "link";
+  if (state.sourceMode !== mode) state.formRevision += 1;
   state.sourceMode = mode;
   $$("[data-source-mode]").forEach((button) => {
     const active = button.dataset.sourceMode === mode;
@@ -94,10 +126,95 @@ function setSourceMode(mode) {
   $("#linkSourcePanel").hidden = mode !== "link";
   $("#pathSourcePanel").hidden = mode !== "path";
   const focusTarget = mode === "link" ? $("#sourceLink") : mode === "path" ? $("#sourcePath") : $("#sourceText");
-  window.setTimeout(() => focusTarget?.focus(), 0);
+  if (focus) focusTarget?.focus({ preventScroll: true });
+}
+
+function resetGenerationForm() {
+  $("#generateForm").reset();
+  $("#fileInput").value = "";
+  $("#pathFileInput").value = "";
+  delete $("#sourcePath").dataset.uploadSource;
+  delete $("#sourcePath").dataset.uploadName;
+  $("#fileNote").textContent = "";
+  $("#fileNote").hidden = true;
+  $(".advanced-options").open = false;
+  state.resetAfterTask = null;
+  state.formRevision += 1;
+  setSourceMode("link", { focus: false });
+  updateCharCount();
+  renderProjectSelection();
+}
+
+function taskFormValues(task) {
+  const request = task.request || {};
+  return {
+    hasSnapshot: Object.keys(request).length > 0,
+    source: request.source ?? task.source ?? "",
+    sourceMode: request.source_mode || task.source_mode || "text",
+    project: request.project ?? task.requested_project ?? "",
+    creator: request.creator ?? "casecraft",
+    section: request.section ?? "",
+    branch: request.branch ?? "",
+    extraPrompt: request.extra_prompt ?? "",
+    skipCode: request.skip_code ?? false,
+    formats: request.formats || Object.keys(task.output_files || {}),
+  };
+}
+
+function restoreTaskForm(task) {
+  resetGenerationForm();
+  const values = taskFormValues(task);
+  setSourceMode(values.sourceMode, { focus: false });
+  const sourceFields = { link: "#sourceLink", text: "#sourceText", path: "#sourcePath" };
+  $(sourceFields[state.sourceMode]).value = values.source;
+
+  const projectAvailable = !values.project || Boolean(state.config?.projects?.[values.project]);
+  $("#projectSelect").value = projectAvailable ? values.project : "";
+  $("#creatorInput").value = values.creator;
+  $("#sectionInput").value = values.section;
+  $("#branchInput").value = values.branch;
+  $("#extraPrompt").value = values.extraPrompt;
+  $("#skipCodeInput").checked = values.skipCode;
+
+  // Older checkpoints only recorded successful exports, not all form options.
+  if (values.formats.length) {
+    $$("input[name='formats']").forEach((input) => {
+      input.checked = values.formats.includes(input.value);
+    });
+  }
+  $(".advanced-options").open = Boolean(
+    values.section || values.branch || values.extraPrompt || values.skipCode
+  );
+  updateCharCount();
+  renderProjectSelection();
+  if (["pending", "running"].includes(task.status)) {
+    state.resetAfterTask = { id: task.id, revision: state.formRevision };
+  }
+
+  if (!projectAvailable) {
+    showToast("原关联项目已不在当前配置中，请重新选择项目", true);
+  } else if (!values.hasSnapshot) {
+    showToast("已回填历史需求；旧任务未保存的配置已恢复默认");
+  } else {
+    showToast("已回填该任务的需求与生成配置");
+  }
+}
+
+function handleTaskCompletion(task) {
+  if (!["done", "error"].includes(task.status) || state.resetAfterTask?.id !== task.id) return;
+  const shouldReset = shouldResetGenerationForm(task, state.resetAfterTask, state.formRevision);
+  state.resetAfterTask = null;
+  if (shouldReset) resetGenerationForm();
+}
+
+function shouldResetGenerationForm(task, resetAfterTask, formRevision) {
+  return task.status === "done"
+    && resetAfterTask?.id === task.id
+    && formRevision === resetAfterTask.revision;
 }
 
 async function loadLocalDocument(file) {
+  const revision = ++state.formRevision;
   if (file.size > 2 * 1024 * 1024) {
     showToast("文档超过 2 MB，请改用本地文件路径", true);
     return;
@@ -105,6 +222,7 @@ async function loadLocalDocument(file) {
 
   try {
     const content = await file.text();
+    if (state.formRevision !== revision) return;
     $("#sourceText").value = content;
     $("#fileNote").textContent = `已载入 ${file.name} · ${formatBytes(file.size)}`;
     $("#fileNote").hidden = false;
@@ -115,7 +233,34 @@ async function loadLocalDocument(file) {
   }
 }
 
+async function uploadPathDocument(file) {
+  if (file.size > 2 * 1024 * 1024) {
+    showToast("需求文件不能超过 2 MB", true);
+    return;
+  }
+  const picker = $("#pathPickerButton");
+  picker.disabled = true;
+  picker.setAttribute("aria-busy", "true");
+  try {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    const uploaded = await apiRequest("/api/uploads", { method: "POST", body: formData });
+    const pathInput = $("#sourcePath");
+    pathInput.value = `已选择：${uploaded.filename}`;
+    pathInput.dataset.uploadSource = uploaded.source;
+    pathInput.dataset.uploadName = uploaded.filename;
+    state.formRevision += 1;
+    showToast(`已上传 ${uploaded.filename} · ${formatBytes(uploaded.size)}`);
+  } catch (error) {
+    showToast(error.message || "文件上传失败", true);
+  } finally {
+    picker.disabled = false;
+    picker.removeAttribute("aria-busy");
+  }
+}
+
 function fillExample() {
+  state.formRevision += 1;
   $("#sourceText").value = `# 手机验证码登录
 
 ## 功能说明
@@ -144,7 +289,9 @@ function renderConfig() {
   const providerLabel = llm.provider === "codex_cli" ? "Codex CLI" : "OpenAI API";
   $("#engineBadge").innerHTML = `<span class="pulse-dot"></span>${escapeHtml(providerLabel)} · ${escapeHtml(llm.model)}`;
   $("#engineName").textContent = `${providerLabel} / ${generator}`;
-  $("#engineDetails").textContent = `${llm.model} · 推理强度 ${llm.reasoning_effort || "默认"}`;
+  const reasoningEffort = llm.reasoning_effort || "默认";
+  const reasoningEffortLabel = reasoningEffortLabels[reasoningEffort] || reasoningEffort;
+  $("#engineDetails").textContent = `${llm.model} · 推理强度 ${reasoningEffortLabel}`;
 
   const projectSelect = $("#projectSelect");
   Object.entries(projects).forEach(([key, project]) => {
@@ -170,12 +317,16 @@ function renderConfig() {
 
 async function submitGeneration(event) {
   event.preventDefault();
+  if ($("#generateButton").disabled) return;
   const sourceFields = {
     text: "#sourceText",
     link: "#sourceLink",
     path: "#sourcePath",
   };
-  const source = $(sourceFields[state.sourceMode] || "#sourceText").value.trim();
+  const sourceField = $(sourceFields[state.sourceMode] || "#sourceText");
+  const source = state.sourceMode === "path"
+    ? (sourceField.dataset.uploadSource || sourceField.value.trim())
+    : sourceField.value.trim();
   const formats = $$("input[name='formats']:checked").map((input) => input.value);
 
   if (!source) {
@@ -208,6 +359,8 @@ async function submitGeneration(event) {
     extra_prompt: $("#extraPrompt").value.trim(),
   };
 
+  const formRevision = state.formRevision;
+  const selectionVersion = state.selectionVersion;
   setSubmitLoading(true);
   try {
     const created = await apiRequest("/api/generate", {
@@ -215,12 +368,17 @@ async function submitGeneration(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const submittedMessage = state.sourceMode === "link"
+    const submittedMessage = payload.source_mode === "link"
       ? (payload.project ? "正在读取需求链接，随后识别并同步代码仓库" : "正在后台读取需求链接并生成用例")
       : (payload.project ? "任务已提交，将先验证代码仓库再生成用例" : "任务已提交，Codex 正在生成用例");
     showToast(submittedMessage);
+    if (selectionVersion === state.selectionVersion) {
+      state.resetAfterTask = { id: created.task_id, revision: formRevision };
+    }
     await refreshTasks(true);
-    await selectTask(created.task_id, true);
+    if (selectionVersion === state.selectionVersion) {
+      await selectTask(created.task_id, { restoreForm: false });
+    }
   } catch (error) {
     showToast(error.message || "提交任务失败", true);
   } finally {
@@ -276,6 +434,16 @@ async function refreshTasks(silent = false) {
   }
 }
 
+function taskDisplayTitle(task) {
+  const title = String(task.requirement_title || "").trim();
+  const isAddress = (value) => /^(?:[a-z]:[\\/]|\\\\|\/(?!\/)|\.\.?[\\/]|https?:\/\/)/i.test(value.replace(/^["']/, ""));
+  if (title && !isAddress(title)) return title;
+  if (task.source_mode === "path" || isAddress(task.source_preview || task.source || "")) {
+    return ["done", "error"].includes(task.status) ? "需求标题待确认" : "正在读取需求标题…";
+  }
+  return task.source_preview || "未命名需求";
+}
+
 function renderHistory() {
   const container = $("#historyList");
   if (!state.tasks.length) {
@@ -285,12 +453,12 @@ function renderHistory() {
 
   container.innerHTML = state.tasks.map((task) => {
     const active = state.activeTask?.id === task.id ? " selected" : "";
-    const title = task.requirement_title || task.source_preview || "未命名需求";
+    const title = taskDisplayTitle(task);
     const canDelete = !["pending", "running"].includes(task.status);
     return `
       <div class="history-row${active}" data-task-id="${escapeAttribute(task.id)}" role="button" tabindex="0">
         <span class="history-status ${escapeAttribute(task.status)}"><i></i>${escapeHtml(statusLabels[task.status] || task.status)}</span>
-        <span class="history-source"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(task.repository?.project_key ? `${task.repository.project_key} · ${task.stage}` : task.stage)} · ${escapeHtml(task.id)}</small></span>
+        <span class="history-source"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(task.repository?.project_key ? `${task.repository.project_key} · ${task.stage}` : task.stage)} · ${escapeHtml(task.id)}</small>${task.warning ? '<small class="history-warning">需重新生成 · 原任务未读取完整需求</small>' : ""}</span>
         <span class="history-count"><strong>${Number(task.case_count || 0)}</strong> 条用例</span>
         <time class="history-time" datetime="${escapeAttribute(task.created_at)}">${escapeHtml(relativeTime(task.created_at))}</time>
         <button class="delete-button" type="button" data-delete-task="${escapeAttribute(task.id)}" aria-label="删除任务" ${canDelete ? "" : "disabled"}>
@@ -300,17 +468,25 @@ function renderHistory() {
   }).join("");
 }
 
-async function selectTask(taskId, scroll = true) {
+async function selectTask(taskId, { scroll = true, restoreForm = true } = {}) {
+  const selectionVersion = ++state.selectionVersion;
   closeTaskStream();
+  if (restoreForm) state.resetAfterTask = null;
   try {
     const task = await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}`);
+    if (selectionVersion !== state.selectionVersion) return;
     state.activeTask = task;
+    if (restoreForm) restoreTaskForm(task);
     renderTask(task);
     renderHistory();
+    handleTaskCompletion(task);
 
     if (["pending", "running"].includes(task.status)) openTaskStream(task.id);
-    if (scroll && window.innerWidth < 980) $("#taskState").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (scroll) {
+      $(restoreForm ? "#builderPanel" : "#taskState").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   } catch (error) {
+    if (selectionVersion !== state.selectionVersion) return;
     showToast(error.message || "读取任务失败", true);
   }
 }
@@ -318,6 +494,8 @@ async function selectTask(taskId, scroll = true) {
 function renderTask(task) {
   $("#emptyState").hidden = true;
   $("#taskState").hidden = false;
+  $("#taskState").dataset.status = task.status;
+  $("#taskState").setAttribute("aria-busy", String(task.status === "running"));
   $("#activitySubtitle").textContent = task.status === "done" ? "任务已完成，可预览或下载" : "正在同步本地执行状态";
 
   const statusPill = $("#statusPill");
@@ -329,7 +507,11 @@ function renderTask(task) {
   $("#progressValue").textContent = progress;
   $("#taskIdLabel").textContent = `TASK ${task.id}`;
   $("#stageLabel").textContent = task.stage || "等待执行";
-  $("#taskSourceLabel").textContent = task.requirement_title || task.source_preview || "—";
+  $("#taskSourceLabel").textContent = taskDisplayTitle(task);
+  $("#taskWarning").hidden = !task.warning;
+  $("#taskWarning").textContent = task.warning || "";
+  $("#overallProgress").style.setProperty("--progress", progress);
+  $("#overallProgress").setAttribute("aria-valuenow", String(progress));
 
   renderPipeline(task);
   renderRepository(task);
@@ -382,19 +564,47 @@ function renderRepository(task) {
   }
 }
 
-function renderPipeline(task) {
-  const steps = $$("#pipelineSteps li");
-  const progress = Number(task.progress || 0);
-  const activeIndex = task.status === "pending"
-    ? -1
-    : steps.reduce((found, step, index) => progress >= Number(step.dataset.threshold) ? index : found, -1);
+const PIPELINE_STAGES = [
+  { key: "parse", label: "解析需求", threshold: 15 },
+  { key: "analyze", label: "关联代码", threshold: 25 },
+  { key: "generate", label: "Codex 生成", threshold: 68 },
+  { key: "export", label: "整理导出", threshold: 92 },
+];
 
-  steps.forEach((step, index) => {
-    step.classList.remove("active", "complete");
-    if (task.status === "done" || index < activeIndex) step.classList.add("complete");
-    else if (index === activeIndex && task.status === "running") step.classList.add("active");
-    else if (task.status === "error" && index < activeIndex) step.classList.add("complete");
+function pipelineStates(task) {
+  const progress = Number(task.progress || 0);
+  const explicitIndex = PIPELINE_STAGES.findIndex((stage) => stage.key === task.stage_key);
+  const activeIndex = explicitIndex >= 0 ? explicitIndex : task.status === "pending"
+    ? -1
+    : PIPELINE_STAGES.reduce((found, stage, index) => progress >= stage.threshold ? index : found, 0);
+  const skipCode = task.request?.skip_code || !(task.request?.project || task.requested_project || task.repository?.project_key);
+  return PIPELINE_STAGES.map((stage, index) => {
+    let status = "waiting";
+    if ((task.skipped_stages || []).includes(stage.key) || (stage.key === "analyze" && skipCode)) status = "skipped";
+    else if (task.status === "done" || (task.completed_stages || []).includes(stage.key) || index < activeIndex) status = "complete";
+    else if (index === activeIndex && task.status === "running") status = "active";
+    else if (index === activeIndex && task.status === "error") status = "failed";
+    return { ...stage, status };
   });
+}
+
+function renderPipeline(task) {
+  const states = pipelineStates(task);
+  const labels = { waiting: "待开始", active: "进行中", complete: "已完成", skipped: "已跳过", failed: "失败" };
+  $$("#pipelineSteps li").forEach((step, index) => {
+    const status = states[index].status;
+    for (const name of Object.keys(labels)) step.classList.toggle(name, name === status);
+    if (status === "active") step.setAttribute("aria-current", "step");
+    else step.removeAttribute("aria-current");
+    step.querySelector(".step-status").textContent = labels[status];
+  });
+  const index = states.findIndex((stage) => ["active", "failed"].includes(stage.status));
+  $("#currentStepLabel").textContent = task.status === "done" ? "全部步骤已结束" : index >= 0
+    ? `第 ${index + 1} / 4 步 · ${states[index].label}${task.status === "error" ? "失败" : "进行中"}`
+    : "任务排队中 · 等待开始";
+  $("#progressHint").textContent = task.status === "running"
+    ? "正在后台执行，请稍候 · 进度按阶段更新"
+    : task.status === "error" ? "流程已停止，请查看下方错误信息" : task.status === "done" ? "可预览或下载测试用例" : "准备就绪后将自动开始";
 }
 
 function renderDownloads(task) {
@@ -409,6 +619,11 @@ function renderResults(task) {
   $("#caseTotal").textContent = Number(task.case_count || 0).toLocaleString("zh-CN");
 
   const cases = task.cases || [];
+  if (state.resultsTaskId !== task.id) {
+    state.resultsTaskId = task.id;
+    state.resultsExpanded = false;
+  }
+  const visibleCases = state.resultsExpanded ? cases : cases.slice(0, DEFAULT_VISIBLE_CASES);
   const priorities = countBy(cases, "优先级");
   const types = countBy(cases, "用例类型");
   const p0p1 = (priorities.P0 || 0) + (priorities.P1 || 0);
@@ -425,7 +640,7 @@ function renderResults(task) {
     <div class="stat-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong><small>${escapeHtml(hint)}</small></div>
   `).join("");
 
-  $("#caseTableBody").innerHTML = cases.map((testCase, index) => {
+  $("#caseTableBody").innerHTML = visibleCases.map((testCase, index) => {
     const priority = String(testCase["优先级"] || "—");
     return `
       <tr>
@@ -437,6 +652,21 @@ function renderResults(task) {
         <td>${escapeHtml(testCase["预期结果"] || "—")}</td>
       </tr>`;
   }).join("");
+
+  const actions = $("#resultsActions");
+  const canExpand = cases.length > DEFAULT_VISIBLE_CASES;
+  actions.hidden = !canExpand;
+  $("#resultsVisibleCount").textContent = `已展示 ${visibleCases.length} / ${cases.length} 条`;
+  $("#toggleResultsButton").setAttribute("aria-expanded", String(state.resultsExpanded));
+  $("#toggleResultsLabel").textContent = state.resultsExpanded
+    ? "收起结果"
+    : `展示更多（剩余 ${Math.max(0, cases.length - DEFAULT_VISIBLE_CASES)} 条）`;
+}
+
+function toggleResultsExpansion() {
+  if (!state.activeTask || state.activeTask.status !== "done") return;
+  state.resultsExpanded = !state.resultsExpanded;
+  renderResults(state.activeTask);
 }
 
 function openTaskStream(taskId) {
@@ -445,10 +675,12 @@ function openTaskStream(taskId) {
   state.stream = stream;
 
   stream.addEventListener("update", (event) => {
+    if (state.stream !== stream || state.activeTask?.id !== taskId) return;
     const task = JSON.parse(event.data);
     state.activeTask = task;
     renderTask(task);
     updateTaskSummary(task);
+    handleTaskCompletion(task);
 
     if (["done", "error"].includes(task.status)) {
       closeTaskStream();
@@ -467,22 +699,26 @@ function openTaskStream(taskId) {
 
 function startPolling(taskId) {
   clearInterval(state.pollTimer);
-  state.pollTimer = setInterval(async () => {
+  const timer = setInterval(async () => {
     try {
       const task = await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}`);
+      if (state.pollTimer !== timer || state.activeTask?.id !== taskId) return;
       state.activeTask = task;
       renderTask(task);
       updateTaskSummary(task);
+      handleTaskCompletion(task);
       if (["done", "error"].includes(task.status)) {
         clearInterval(state.pollTimer);
         state.pollTimer = null;
         await refreshTasks(true);
       }
     } catch (_) {
+      if (state.pollTimer !== timer) return;
       clearInterval(state.pollTimer);
       state.pollTimer = null;
     }
   }, 2000);
+  state.pollTimer = timer;
 }
 
 function closeTaskStream() {
@@ -504,8 +740,12 @@ async function deleteTask(taskId) {
   try {
     await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
     if (state.activeTask?.id === taskId) {
+      state.selectionVersion += 1;
+      state.resetAfterTask = null;
       closeTaskStream();
       state.activeTask = null;
+      state.resultsTaskId = null;
+      state.resultsExpanded = false;
       $("#taskState").hidden = true;
       $("#emptyState").hidden = false;
       $("#resultsSection").hidden = true;

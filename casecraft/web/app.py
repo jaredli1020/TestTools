@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field, fields
@@ -12,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -20,12 +21,15 @@ from sse_starlette.sse import EventSourceResponse
 
 from casecraft.bootstrap import bootstrap_defaults
 from casecraft.core import Pipeline, get_config, load_config, registry
-from casecraft.sources import MongosoShareSource
+from casecraft.sources import FileSource, MongosoShareSource
+from casecraft.sources.titles import is_local_path_reference
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CHECKPOINT_DIR = PROJECT_ROOT / ".task_checkpoints"
+UPLOAD_DIR = PROJECT_ROOT / ".uploaded_requirements"
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 
 app = FastAPI(
     title="CaseCraft",
@@ -41,8 +45,13 @@ class TaskInfo:
     source: str
     source_mode: str = "text"
     requested_project: str = ""
+    request: dict = field(default_factory=dict)
     status: str = "pending"
     stage: str = "等待执行"
+    stage_key: str = ""
+    completed_stages: list[str] = field(default_factory=list)
+    skipped_stages: list[str] = field(default_factory=list)
+    warning: str = ""
     progress: int = 0
     requirement_title: str = ""
     case_count: int = 0
@@ -105,6 +114,32 @@ def api_health():
     return {"status": "ok", "service": "casecraft"}
 
 
+@app.post("/api/uploads")
+async def api_upload_requirement(file: UploadFile = File(...)):
+    """Persist a browser-selected, supported text requirement for local parsing."""
+    filename = Path(file.filename or "").name
+    suffix = Path(filename).suffix.lower()
+    if not filename or suffix not in FileSource.SUPPORTED_EXTS:
+        raise HTTPException(422, "仅支持 .md、.txt、.json、.markdown 和 .rst 需求文件")
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if not content:
+        raise HTTPException(422, "上传的需求文件为空")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(422, "需求文件不能超过 2 MB")
+    try:
+        content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(422, "需求文件必须是 UTF-8 文本格式") from exc
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    target = UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
+    temporary = target.with_suffix(f"{suffix}.tmp")
+    temporary.write_bytes(content)
+    os.replace(temporary, target)
+    return {"source": str(target.resolve()), "filename": filename, "size": len(content)}
+
+
 @app.get("/api/config")
 def api_config():
     cfg = get_config()
@@ -145,6 +180,13 @@ def api_generate(req: GenRequest, background: BackgroundTasks):
             "请输入有效的 Mongoso 需求分享链接，格式为 "
             "https://max.mongoso.com/share?itemid=...",
         )
+    if req.source_mode == "path":
+        try:
+            FileSource.resolve_path(source)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+    elif req.source_mode == "text" and is_local_path_reference(source):
+        raise HTTPException(422, "输入内容是文件路径，请切换到“本地路径”，不要将文件地址当作需求正文。")
 
     available_formats = set(registry.list_exporters())
     requested_formats = list(dict.fromkeys(req.formats))
@@ -162,6 +204,7 @@ def api_generate(req: GenRequest, background: BackgroundTasks):
         source=source,
         source_mode=req.source_mode,
         requested_project=req.project or "",
+        request=req.model_dump(),
     )
     with _tasks_lock:
         _tasks[task_id] = task
@@ -230,6 +273,7 @@ def _run_task(task_id: str, req: GenRequest):
         task.status = "running"
         task.stage = "读取需求链接" if req.source_mode == "link" else "准备生成"
         task.progress = 5
+        task.stage_key = "parse"
         _persist_task(task)
 
         pipeline = Pipeline()
@@ -239,6 +283,7 @@ def _run_task(task_id: str, req: GenRequest):
         try:
             result = pipeline.run(
                 req.source,
+                source_mode=req.source_mode,
                 section=req.section,
                 project=req.project,
                 branch=req.branch,
@@ -265,6 +310,7 @@ def _run_task(task_id: str, req: GenRequest):
             task.status = "done"
             task.progress = 100
             task.stage = "生成完成"
+            task.stage_key = "complete"
         except Exception as exc:
             task.status = "error"
             task.stage = "生成失败"
@@ -294,17 +340,28 @@ class _WebListener:
         if stage == "parse" and self.task.source_mode == "link":
             label = "读取需求链接"
         self.task.stage = label
+        self.task.stage_key = stage
         self.task.progress = progress
         _persist_task(self.task)
 
     def on_stage_end(self, stage: str, **context):
-        return None
+        if context.get("skipped"):
+            if stage not in self.task.skipped_stages:
+                self.task.skipped_stages.append(stage)
+        elif context.get("success") and stage not in self.task.completed_stages:
+            self.task.completed_stages.append(stage)
+        requirement = context.get("requirement")
+        if stage == "parse" and requirement:
+            self.task.requirement_title = requirement.title
+            self.task.requirement_source = _requirement_source_summary(requirement)
+        _persist_task(self.task)
 
     def on_error(self, stage: str, error: Exception, **context):
         self.task.error = str(error)
 
     def on_code_progress(self, label: str, progress: int):
         self.task.stage = label
+        self.task.stage_key = "analyze"
         self.task.progress = progress
         _persist_task(self.task)
 
@@ -340,6 +397,11 @@ def _load_checkpoints():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             task = TaskInfo(**{key: value for key, value in payload.items() if key in valid_fields})
+            if _repair_legacy_path_title(task):
+                backup = path.with_suffix(".before-title-repair.bak")
+                if not backup.exists():
+                    shutil.copy2(path, backup)
+                _persist_task(task)
             if task.status in {"pending", "running"}:
                 task.status = "error"
                 task.stage = "任务已中断"
@@ -349,6 +411,22 @@ def _load_checkpoints():
             _tasks[task.id] = task
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             continue
+
+
+def _repair_legacy_path_title(task: TaskInfo) -> bool:
+    """Repair mislabeled history without claiming the old cases used file content."""
+    if task.source_mode != "path" or not is_local_path_reference(task.requirement_title):
+        return False
+    try:
+        requirement = FileSource().parse(task.source)
+        task.requirement_title = requirement.title
+        task.requirement_source["title_recovered_from"] = requirement.source_ref
+    except (OSError, ValueError):
+        task.requirement_title = "本地需求（标题待确认）"
+    if task.requirement_source.get("type") == "text":
+        task.warning = "原任务误将文件地址当作正文，未读取完整需求文件。标题已修正，原用例仅供参考，请重新生成。"
+        task.requirement_source["needs_regeneration"] = True
+    return True
 
 
 def _source_preview(source: str, limit: int = 96) -> str:

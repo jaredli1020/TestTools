@@ -1,6 +1,10 @@
 import unittest
+from unittest.mock import Mock
+
+import requests
 
 from casecraft.sources.mongoso import MongosoShareSource
+from casecraft.core import Config, Pipeline, Registry
 
 
 class _FakeResponse:
@@ -104,6 +108,23 @@ class MongosoShareSourceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "分享已失效"):
             source.parse("https://max.mongoso.com/share?itemid=T749nod")
+
+    def test_network_failure_stops_pipeline_before_codex_or_export(self):
+        session = Mock()
+        session.post.side_effect = requests.ConnectionError("connection blocked")
+        source = MongosoShareSource(session=session)
+        registry = Registry()
+        registry.register_source(source)
+        generator = Mock()
+        generator.name = "codex"
+        registry.register_generator(generator, default=True)
+        with self.assertRaisesRegex(ValueError, "无法读取 Mongoso 需求分享链接"):
+            Pipeline(registry_=registry, config=Config()).run(
+                "https://max.mongoso.com/share?itemid=T749nod", skip_code=True
+            )
+        session.post.assert_called_once()
+        session.get.assert_not_called()
+        generator.generate.assert_not_called()
 
 
 if __name__ == "__main__":
