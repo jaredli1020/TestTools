@@ -137,7 +137,8 @@ function resetGenerationForm() {
   delete $("#sourcePath").dataset.uploadName;
   $("#fileNote").textContent = "";
   $("#fileNote").hidden = true;
-  $(".advanced-options").open = false;
+  $("#caseScopeInput").value = "all";
+  $(".advanced-options").open = true;
   state.resetAfterTask = null;
   state.formRevision += 1;
   setSourceMode("link", { focus: false });
@@ -156,6 +157,7 @@ function taskFormValues(task) {
     section: request.section ?? "",
     branch: request.branch ?? "",
     extraPrompt: request.extra_prompt ?? "",
+    caseScope: request.case_scope === "core" ? "core" : "all",
     skipCode: request.skip_code ?? false,
     formats: request.formats || Object.keys(task.output_files || {}),
   };
@@ -174,6 +176,7 @@ function restoreTaskForm(task) {
   $("#sectionInput").value = values.section;
   $("#branchInput").value = values.branch;
   $("#extraPrompt").value = values.extraPrompt;
+  $("#caseScopeInput").value = values.caseScope;
   $("#skipCodeInput").checked = values.skipCode;
 
   // Older checkpoints only recorded successful exports, not all form options.
@@ -182,9 +185,7 @@ function restoreTaskForm(task) {
       input.checked = values.formats.includes(input.value);
     });
   }
-  $(".advanced-options").open = Boolean(
-    values.section || values.branch || values.extraPrompt || values.skipCode
-  );
+  $(".advanced-options").open = true;
   updateCharCount();
   renderProjectSelection();
   if (["pending", "running"].includes(task.status)) {
@@ -357,6 +358,7 @@ async function submitGeneration(event) {
     skip_code: $("#skipCodeInput").checked,
     creator: $("#creatorInput").value.trim() || "casecraft",
     extra_prompt: $("#extraPrompt").value.trim(),
+    case_scope: $("#caseScopeInput").value,
   };
 
   const formRevision = state.formRevision;
@@ -610,7 +612,13 @@ function renderPipeline(task) {
 function renderDownloads(task) {
   const entries = Object.keys(task.output_files || {});
   $("#downloadActions").innerHTML = entries.length
-    ? entries.map((format) => `<a class="download-button" href="/api/tasks/${escapeAttribute(task.id)}/download/${escapeAttribute(format)}">下载 ${escapeHtml(formatLabels[format] || format)}</a>`).join("")
+    ? entries.map((format) => {
+      const filename = task.download_names?.[format] || "";
+      // A changed filename must also change the URL to bypass older cached attachments.
+      const query = filename ? `filename=${encodeURIComponent(filename)}` : "v=requirement-title-v2";
+      const href = `/api/tasks/${encodeURIComponent(task.id)}/download/${encodeURIComponent(format)}?${query}`;
+      return `<a class="download-button" href="${escapeAttribute(href)}" download="${escapeAttribute(filename)}">下载 ${escapeHtml(formatLabels[format] || format)}</a>`;
+    }).join("")
     : `<span class="field-hint">本次任务没有生成导出文件</span>`;
 }
 

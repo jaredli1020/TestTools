@@ -572,6 +572,7 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
   .segmented { align-self: stretch; }
   .segment { flex: 1; }
   .form-grid, .format-options { grid-template-columns: 1fr 1fr; }
+  .form-grid.generation-options { grid-template-columns: minmax(0, 1fr); }
   .section-title-row h2 { font-size: 23px; }
   .history-row { grid-template-columns: 82px 1fr 34px; gap: 10px; }
   .history-count, .history-time { display: none; }

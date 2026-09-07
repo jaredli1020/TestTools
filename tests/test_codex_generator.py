@@ -13,6 +13,8 @@ from casecraft.generators.llm import (
     CASE_FIELDS,
     BACKGROUND_GENERATION_INSTRUCTIONS,
     CLI_DISABLED_FEATURES,
+    CORE_FLOW_SYSTEM_PROMPT,
+    DEFAULT_SYSTEM_PROMPT,
     CodexCaseGenerator,
     LLMCaseGenerator,
     _parse_case_payload,
@@ -70,6 +72,54 @@ def _config(api_key="test-key", provider="openai", model="gpt-5.6"):
 
 
 class CodexCaseGeneratorTests(unittest.TestCase):
+    def test_core_scope_changes_generation_rules_without_affecting_later_all_cases(self):
+        with (
+            patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=_FakeOpenAI)}),
+            patch("casecraft.generators.llm.get_config", return_value=_config()),
+        ):
+            generator = CodexCaseGenerator()
+            for code in (None, CodeContext(content="POST /orders 创建订单并返回待审批状态")):
+                with self.subTest(code=bool(code)):
+                    requirement = Requirement(title="订单审批", content="创建订单并审批通过")
+                    generator.generate(requirement, code, case_scope="core", extra_prompt="重点验证审批结果")
+                    core_request = _FakeOpenAI.last_instance.responses.request
+                    self.assertEqual(core_request["instructions"], f"{BACKGROUND_GENERATION_INSTRUCTIONS}\n{CORE_FLOW_SYSTEM_PROMPT}")
+                    self.assertIn("本次用例范围：核心流程", core_request["input"])
+                    self.assertIn("重点验证审批结果", core_request["input"])
+                    self.assertNotIn("请覆盖正常流程、异常场景和边界值", core_request["input"])
+                    self.assertNotIn("请按两阶段策略", core_request["input"])
+                    if code:
+                        self.assertIn(code.content, core_request["input"])
+
+                    generator.generate(requirement, code)
+                    default_request = _FakeOpenAI.last_instance.responses.request
+                    self.assertEqual(default_request["instructions"], f"{BACKGROUND_GENERATION_INSTRUCTIONS}\n{DEFAULT_SYSTEM_PROMPT}")
+                    self.assertIn("请按两阶段策略" if code else "请覆盖正常流程、异常场景和边界值", default_request["input"])
+                    generator.generate(requirement, code, case_scope="all")
+                    self.assertEqual(_FakeOpenAI.last_instance.responses.request, default_request)
+
+    def test_cli_core_scope_uses_main_flow_rules_in_the_actual_prompt(self):
+        prompts = []
+
+        def fake_run(command, **kwargs):
+            prompts.append(kwargs["input"])
+            event = {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps({"cases": [_case()]})}}
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(event), stderr="")
+
+        with (
+            patch("casecraft.generators.llm.get_config", return_value=_config(provider="codex_cli")),
+            patch("casecraft.generators.llm.shutil.which", return_value=None),
+            patch("casecraft.generators.llm.subprocess.run", side_effect=fake_run),
+        ):
+            generator = CodexCaseGenerator()
+            requirement = Requirement(title="订单审批", content="创建订单并审批通过")
+            generator.generate(requirement, case_scope="core")
+            generator.generate(requirement)
+        self.assertIn(CORE_FLOW_SYSTEM_PROMPT, prompts[0])
+        self.assertNotIn(DEFAULT_SYSTEM_PROMPT, prompts[0])
+        self.assertIn(DEFAULT_SYSTEM_PROMPT, prompts[1])
+        self.assertNotIn(CORE_FLOW_SYSTEM_PROMPT, prompts[1])
+
     def test_responses_api_request_and_structured_output(self):
         fake_module = SimpleNamespace(OpenAI=_FakeOpenAI)
         with (

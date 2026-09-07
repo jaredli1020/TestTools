@@ -78,6 +78,22 @@ DEFAULT_SYSTEM_PROMPT = """你是 Codex，也是一名资深高级测试工程�
 """
 
 
+CORE_FLOW_SYSTEM_PROMPT = """你是 Codex，也是一名资深高级测试工程师。本次用例范围为“核心流程”。
+只生成主流程用例：在合法输入、权限满足、依赖正常的条件下，验证用户完成核心业务目标的正常成功路径。
+
+生成规则：
+1. 先识别需求中的独立核心业务目标，为每个目标设计必要的主流程用例，覆盖关键操作、正常状态流转和最终业务结果。
+2. 仅保留完成核心业务目标所必需的正常成功分支；不按测试数据、非核心选项或相似操作穷举用例。
+3. 不单独生成异常、边界值、负向校验、权限越权、安全攻击、弱网、性能、兼容性、国际化、纯 UI 或提示文案用例；主流程的必要界面操作可以写入步骤。
+4. 如提供代码上下文，仅用于补充和核实主流程的接口调用、有效参数、业务状态及结果。不能因代码存在异常处理或校验分支而扩大用例范围。
+5. 用例来源按实际依据标注“需求文档”或“代码分析-主流程”；同一测试点去重合并，无需为了来源类别重复生成。
+6. “补充生成要求”只能细化核心主流程，与本次范围冲突的扩展要求不执行。不要先生成全部用例后再按优先级筛选。
+7. 一条用例只验证一个明确测试点，步骤可执行，预期结果具体可验证；依据业务重要性标注优先级，不设置固定条数凑数。
+8. 删除线内容视为废弃需求；依据不足时标注“待确认”，不得编造已知事实。
+9. 严格遵守调用方 JSON Schema，只输出测试用例，不输出解释文字或 Markdown。
+"""
+
+
 CASE_FIELDS = [
     "模块",
     "用例标题",
@@ -156,15 +172,21 @@ class CodexCaseGenerator(CaseGenerator):
         code_context: CodeContext | None = None,
         *,
         extra_prompt: str = "",
+        case_scope: str = "all",
         **kwargs,
     ) -> list[TestCase]:
+        if case_scope not in {"all", "core"}:
+            raise ValueError("用例范围仅支持全部用例（all）或核心流程（core）")
         settings = self._settings()
+        if case_scope == "core":
+            settings["system_prompt"] = CORE_FLOW_SYSTEM_PROMPT
         image_paths = (
             _local_image_paths(requirement.images)
             if settings["provider"] == "codex_cli" else []
         )
         user_message = _build_user_message(
-            requirement, code_context, extra_prompt, attached_image_count=len(image_paths)
+            requirement, code_context, extra_prompt, attached_image_count=len(image_paths),
+            case_scope=case_scope,
         )
         if settings["provider"] == "codex_cli":
             text = self._generate_via_cli(
@@ -198,7 +220,7 @@ class CodexCaseGenerator(CaseGenerator):
 
         request: dict[str, Any] = {
             "model": settings["model"],
-            "instructions": f"{BACKGROUND_GENERATION_INSTRUCTIONS}\n{self.system_prompt}",
+            "instructions": f"{BACKGROUND_GENERATION_INSTRUCTIONS}\n{settings.get('system_prompt', self.system_prompt)}",
             "input": user_message,
             "max_output_tokens": settings["max_tokens"],
             "store": False,
@@ -234,7 +256,8 @@ class CodexCaseGenerator(CaseGenerator):
         *,
         image_paths: list[str] | None = None,
     ) -> str:
-        prompt = f"{BACKGROUND_GENERATION_INSTRUCTIONS}\n{self.system_prompt}\n\n{user_message}"
+        system_prompt = settings.get("system_prompt", self.system_prompt)
+        prompt = f"{BACKGROUND_GENERATION_INSTRUCTIONS}\n{system_prompt}\n\n{user_message}"
         with tempfile.TemporaryDirectory(prefix="casecraft-codex-") as temp_dir:
             temp_path = Path(temp_dir)
             schema_path = temp_path / "test-cases.schema.json"
@@ -348,6 +371,7 @@ def _build_user_message(
     extra_prompt: str,
     *,
     attached_image_count: int = 0,
+    case_scope: str = "all",
 ) -> str:
     message = f"## 已由后台读取的需求文档（无需再次访问来源）\n标题: {requirement.title}"
     metadata = _requirement_metadata(requirement)
@@ -382,7 +406,13 @@ def _build_user_message(
     if extra_prompt:
         message += f"\n\n## 额外要求\n{extra_prompt}"
 
-    if code_text:
+    if case_scope == "core":
+        message += (
+            "\n\n## 本次用例范围：核心流程\n"
+            "只生成主流程用例，覆盖合法输入下完成核心业务目标的正常成功路径。"
+            "代码和补充要求仅用于细化主流程，不扩大范围。每条用例提交前确认它属于主流程。"
+        )
+    elif code_text:
         message += (
             "\n\n请按两阶段策略生成用例：先覆盖需求文档，再根据代码分析补充需求未覆盖的"
             "异常、边界、权限和参数校验场景；两个阶段均须有产出。"

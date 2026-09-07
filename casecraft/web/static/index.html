@@ -6,7 +6,7 @@
   <meta name="description" content="CaseCraft - 使用 Codex 将产品需求转换为可执行测试用例">
   <title>CaseCraft · 测试用例工作台</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20260903-horizontal-progress">
+  <link rel="stylesheet" href="/static/styles.css?v=20260907-case-scope">
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -137,7 +137,7 @@
             </div>
           </fieldset>
 
-          <details class="advanced-options">
+          <details class="advanced-options" open>
             <summary>
               <span>高级配置</span>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
@@ -153,9 +153,19 @@
                   <input id="branchInput" type="text" placeholder="默认使用项目配置">
                 </div>
               </div>
-              <div class="field-group">
-                <label class="field-label" for="extraPrompt">补充生成要求</label>
-                <textarea id="extraPrompt" rows="3" placeholder="例如：重点覆盖权限越权、重复提交和弱网场景"></textarea>
+              <div class="form-grid generation-options">
+                <div class="field-group">
+                  <label class="field-label" for="extraPrompt">补充生成要求</label>
+                  <textarea id="extraPrompt" rows="3" placeholder="例如：重点验证订单从创建到审批完成的流程"></textarea>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="caseScopeInput">用例范围</label>
+                  <select id="caseScopeInput" aria-describedby="caseScopeHint">
+                    <option value="all" selected>全部用例</option>
+                    <option value="core">核心流程</option>
+                  </select>
+                  <p class="field-hint" id="caseScopeHint">全部用例覆盖正常、异常和边界等场景；核心流程仅生成正常主流程用例。</p>
+                </div>
               </div>
               <label class="switch-row">
                 <span>
@@ -310,6 +320,6 @@
   </main>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js?v=20260903-horizontal-progress" defer></script>
+  <script src="/static/app.js?v=20260907-case-scope" defer></script>
 </body>
 </html>

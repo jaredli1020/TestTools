@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
 
@@ -129,6 +130,57 @@ class WebWorkbenchTests(unittest.TestCase):
         self.assertNotIn("\n", preview)
         self.assertTrue(preview.endswith("…"))
 
+    def test_downloads_use_requirement_titles_and_preserve_existing_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for fmt, extension in (("excel", "xlsx"), ("xmind", "xmind"), ("markdown", "md"), ("json", "json")):
+                with self.subTest(fmt=fmt):
+                    path = Path(folder) / f"测试用例_20260907_095346.{extension}"
+                    content = b"existing exported content"
+                    path.write_bytes(content)
+                    task = TaskInfo(
+                        id=f"download-{fmt}", source="原始需求正文", status="done",
+                        requirement_title="机酒审批新增顺序审批配置 PRD",
+                        output_files={fmt: str(path)},
+                    )
+                    # Exercise historical tasks reloaded from a checkpoint too.
+                    web_app._persist_task(task)
+                    web_app._load_checkpoints()
+                    response = self.client.get(f"/api/tasks/{task.id}/download/{fmt}")
+                    self.assertEqual(response.status_code, 200)
+                    disposition = unquote(response.headers["content-disposition"])
+                    self.assertEqual(disposition, f"attachment; filename*=utf-8''机酒审批新增顺序审批配置 PRD_测试用例.{extension}")
+                    self.assertIn("no-store", response.headers["cache-control"])
+                    self.assertEqual(response.content, content)
+                    self.assertEqual(path.read_bytes(), content)
+                    self.assertEqual(web_app._tasks[task.id].output_files[fmt], str(path))
+                    detail = self.client.get(f"/api/tasks/{task.id}").json()
+                    self.assertEqual(detail["download_names"][fmt], f"机酒审批新增顺序审批配置 PRD_测试用例.{extension}")
+                    refreshed = self.client.get(
+                        f"/api/tasks/{task.id}/download/{fmt}",
+                        params={"filename": detail["download_names"][fmt]},
+                        headers={"If-None-Match": response.headers["etag"]},
+                    )
+                    self.assertEqual(refreshed.status_code, 200)
+                    self.assertEqual(refreshed.headers["content-disposition"], response.headers["content-disposition"])
+                    self.assertEqual(refreshed.content, content)
+
+    def test_download_filename_handles_special_characters_and_missing_titles(self):
+        samples = [
+            ("出发/到达时间:筛选?", "出发_到达时间_筛选_测试用例.xlsx"),
+            ('订单\\审批<>"|*\r\n配置. ', "订单_审批_配置_测试用例.xlsx"),
+            ("", "未命名需求_测试用例.xlsx"),
+            (r"C:\Users\test\draft.md", "未命名需求_测试用例.xlsx"),
+            ("https://max.mongoso.com/share?itemid=demo", "未命名需求_测试用例.xlsx"),
+        ]
+        for title, expected in samples:
+            with self.subTest(title=title):
+                task = TaskInfo(id="filename", source="", requirement_title=title)
+                self.assertEqual(web_app._download_filename(task, "old.xlsx"), expected)
+        long_title = TaskInfo(id="filename", source="", requirement_title="中文需求😀" * 100)
+        filename = web_app._download_filename(long_title, "old.xlsx")
+        self.assertLessEqual(len(filename.encode("utf-8")), 255)
+        self.assertTrue(filename.endswith("_测试用例.xlsx"))
+
     def test_submitted_options_are_returned_and_persisted_for_history_restore(self):
         request = {
             "source": "https://max.mongoso.com/share?itemid=T749nod",
@@ -147,7 +199,7 @@ class WebWorkbenchTests(unittest.TestCase):
         task_id = response.json()["task_id"]
         run_task.assert_called_once()
         detail = self.client.get(f"/api/tasks/{task_id}").json()
-        expected = {**request, "formats": ["xmind", "json"], "output_path": None}
+        expected = {**request, "formats": ["xmind", "json"], "output_path": None, "case_scope": "all"}
         self.assertEqual(detail["request"], expected)
         checkpoint = json.loads(web_app._checkpoint_path(task_id).read_text(encoding="utf-8"))
         self.assertEqual(checkpoint["request"], expected)
@@ -205,6 +257,7 @@ class WebWorkbenchTests(unittest.TestCase):
                     self.assertEqual(detail["status"], "done", detail["error"])
                     self.assertEqual(detail["requirement_title"], expected)
                     self.assertEqual(generate.call_args.args[0].title, expected)
+                    self.assertEqual(generate.call_args.kwargs["case_scope"], "all")
                     self.assertEqual(detail["request"]["source"], source)
                     history = self.client.get("/api/tasks?limit=100").json()
                     row = next(item for item in history if item["id"] == task_id)
@@ -213,6 +266,35 @@ class WebWorkbenchTests(unittest.TestCase):
                     web_app._load_checkpoints()
                     restored = self.client.get(f"/api/tasks/{task_id}").json()
                     self.assertEqual(restored["requirement_title"], expected)
+
+    def test_core_scope_reaches_generator_and_survives_history_reload(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "requirement.md"
+            path.write_text("# 订单审批\n创建订单并审批通过", encoding="utf-8")
+            for mode, source in (("text", "# 订单审批\n创建订单并审批通过"), ("path", str(path)), ("link", "https://max.mongoso.com/share?itemid=T749nod")):
+                with (
+                    self.subTest(mode=mode),
+                    patch.object(CodexCaseGenerator, "generate", return_value=[]) as generate,
+                    patch.object(MongosoShareSource, "parse", return_value=Requirement(title="订单审批", content="创建订单并审批通过")),
+                ):
+                    response = self.client.post("/api/generate", json={
+                        "source": source, "source_mode": mode, "case_scope": "core",
+                        "extra_prompt": "重点验证审批结果",
+                    })
+                    self.assertEqual(response.status_code, 202)
+                    task_id = response.json()["task_id"]
+                    self.assertEqual(generate.call_args.kwargs["case_scope"], "core")
+                    self.assertEqual(generate.call_args.kwargs["extra_prompt"], "重点验证审批结果")
+                    web_app._tasks.pop(task_id)
+                    web_app._load_checkpoints()
+                    restored = self.client.get(f"/api/tasks/{task_id}").json()
+                    self.assertEqual(restored["request"]["case_scope"], "core")
+                    self.assertEqual(restored["status"], "done")
+
+        with patch.object(web_app, "_run_task") as run_task:
+            invalid = self.client.post("/api/generate", json={"source": "订单审批", "case_scope": "invalid"})
+            self.assertEqual(invalid.status_code, 422)
+            run_task.assert_not_called()
 
     def test_bad_local_path_fails_before_creating_task_or_invoking_codex(self):
         for mode in ("path", "text"):

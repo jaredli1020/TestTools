@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -71,6 +72,9 @@ class TaskInfo:
         if not include_cases:
             payload["cases"] = []
         payload["source_preview"] = _source_preview(self.source)
+        payload["download_names"] = {
+            fmt: _download_filename(self, path) for fmt, path in self.output_files.items()
+        }
         return payload
 
 
@@ -89,6 +93,7 @@ class GenRequest(BaseModel):
     formats: list[str] = Field(default_factory=lambda: ["excel"])
     creator: str = "casecraft"
     extra_prompt: str = ""
+    case_scope: Literal["all", "core"] = "all"
     output_path: Optional[str] = None
 
 
@@ -101,7 +106,7 @@ def _startup():
 
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/favicon.svg", include_in_schema=False)
@@ -264,7 +269,24 @@ def api_download(task_id: str, fmt: str):
     path = task.output_files[fmt]
     if not os.path.isfile(path):
         raise HTTPException(404, "文件已删除")
-    return FileResponse(path, filename=os.path.basename(path))
+    return FileResponse(
+        path,
+        filename=_download_filename(task, path),
+        headers={"Cache-Control": "private, no-store, max-age=0"},
+    )
+
+
+def _download_filename(task: TaskInfo, path: str) -> str:
+    """Name new and historical downloads from the title, keeping stored files intact."""
+    title = task.requirement_title.strip()
+    if is_local_path_reference(title) or title.lower().startswith(("http://", "https://")):
+        title = ""
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]+', "_", title)
+    title = re.sub(r"\s+", " ", title).strip(" ._")
+    # Leave room for the suffix on filesystems with a 255-byte filename limit.
+    title = title.encode("utf-8")[:200].decode("utf-8", errors="ignore").rstrip(" ._")
+    title = title or "未命名需求"
+    return f"{title}_测试用例{Path(path).suffix}"
 
 
 def _run_task(task_id: str, req: GenRequest):
@@ -291,6 +313,7 @@ def _run_task(task_id: str, req: GenRequest):
                 output_path=req.output_path,
                 creator=req.creator,
                 extra_prompt=req.extra_prompt,
+                case_scope=req.case_scope,
                 skip_code=req.skip_code,
                 task_name=_source_preview(req.source, 60),
                 progress_callback=listener.on_code_progress,

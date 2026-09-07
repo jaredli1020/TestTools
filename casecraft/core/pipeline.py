@@ -169,6 +169,7 @@ class Pipeline:
             task_name: str = "",
             skip_code: bool = False,
             source_mode: str | None = None,
+            case_scope: str = "all",
             **kwargs) -> PipelineResult:
         """执行完整管道"""
         result = PipelineResult()
@@ -212,6 +213,7 @@ class Pipeline:
                 result.code_context,
                 generator_name=generator,
                 extra_prompt=extra_prompt,
+                case_scope=case_scope,
                 **kwargs,
             )
             result.cases = cases

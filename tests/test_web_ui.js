@@ -51,6 +51,7 @@ const task = {
     section: "验收标准",
     branch: "feature/test",
     extra_prompt: "覆盖异常场景",
+    case_scope: "core",
     skip_code: false,
     formats: ["xmind", "json"],
   },
@@ -65,6 +66,7 @@ assert.deepEqual(plain(evaluate("taskFormValues(fixtureTask)")), {
   section: "验收标准",
   branch: "feature/test",
   extraPrompt: "覆盖异常场景",
+  caseScope: "core",
   skipCode: false,
   formats: ["xmind", "json"],
 });
@@ -84,6 +86,7 @@ assert.deepEqual(plain(evaluate("taskFormValues(legacyTask)")), {
   section: "",
   branch: "",
   extraPrompt: "",
+  caseScope: "all",
   skipCode: false,
   formats: ["json"],
 });
@@ -112,7 +115,7 @@ for (const name of [
   "branchInput", "extraPrompt", "skipCodeInput", "creatorInput", "fileInput", "pathFileInput",
   "fileNote", "charCount", "projectHelp", "generateForm", "toast",
   "textSourcePanel", "linkSourcePanel", "pathSourcePanel", "builderPanel",
-  "historyList",
+  "historyList", "downloadActions", "caseScopeInput", "generateButton",
 ]) {
   elements.set(`#${name}`, control(name === "creatorInput" ? "casecraft" : ""));
 }
@@ -124,6 +127,7 @@ context.document.querySelector = get;
 context.document.querySelectorAll = (selector) => {
   if (selector === "[data-source-mode]") return tabs;
   if (selector === "input[name='formats']") return formats;
+  if (selector === "input[name='formats']:checked") return formats.filter(input => input.checked);
   return [];
 };
 context.setTimeout = () => 1;
@@ -137,6 +141,26 @@ get("#generateForm").reset = () => {
 };
 context.fixtureConfig = { projects: { code_auto: {}, "accomy-h5": {} } };
 evaluate("state.config = fixtureConfig");
+
+// Download URLs must bypass pre-rename cached attachments for every format.
+for (const [format, extension] of [["excel", "xlsx"], ["xmind", "xmind"], ["markdown", "md"], ["json", "json"]]) {
+  const filename = `机酒审批配置 PRD_测试用例.${extension}`;
+  context.renderDownloads({
+    id: "cached-task", output_files: { [format]: `old-timestamp.${extension}` },
+    download_names: { [format]: filename },
+  });
+  const markup = get("#downloadActions").innerHTML;
+  assert.ok(markup.includes(`download="${filename}"`));
+  assert.ok(markup.includes(`/download/${format}?filename=${encodeURIComponent(filename)}`));
+  assert.ok(!markup.includes("old-timestamp"));
+}
+context.renderDownloads({ id: "legacy", output_files: { xmind: "old.xmind" } });
+assert.ok(get("#downloadActions").innerHTML.includes("?v=requirement-title-v2"));
+context.renderDownloads({
+  id: "quoted", output_files: { xmind: "old.xmind" },
+  download_names: { xmind: '需求"<内容>_测试用例.xmind' },
+});
+assert.ok(get("#downloadActions").innerHTML.includes('download="需求&quot;&lt;内容&gt;_测试用例.xmind"'));
 
 // All three modes show the backend's actual requirement title, not a filename
 // or raw-text preview. Keep escaping titles supplied by requirement documents.
@@ -157,6 +181,7 @@ assert.equal(get("#sourceLink").value, task.request.source);
 assert.equal(get("#creatorInput").value, "测试人员");
 assert.equal(get("#projectSelect").value, "code_auto");
 assert.equal(get("#branchInput").value, "feature/test");
+assert.equal(get("#caseScopeInput").value, "core");
 assert.equal(get(".advanced-options").open, true);
 assert.equal(get("#skipCodeInput").disabled, true);
 assert.deepEqual(formats.filter((input) => input.checked).map((input) => input.value), ["xmind", "json"]);
@@ -167,6 +192,7 @@ for (const mode of ["text", "path", "link"]) {
   context.handleTaskCompletion(historical);
   const sourceId = { text: "#sourceText", path: "#sourcePath", link: "#sourceLink" }[mode];
   assert.equal(evaluate("state.sourceMode"), mode);
+  assert.equal(get("#caseScopeInput").value, "core");
   assert.equal(get(sourceId).value, task.request.source, "viewing a completed history task must not clear it");
 }
 
@@ -188,7 +214,8 @@ assert.equal(get("#fileNote").hidden, true);
 assert.equal(get("#fileNote").textContent, "");
 assert.equal(get("#sourcePath").dataset.uploadSource, undefined);
 assert.equal(get("#charCount").textContent, "0 字");
-assert.equal(get(".advanced-options").open, false);
+assert.equal(get(".advanced-options").open, true);
+assert.equal(get("#caseScopeInput").value, "all");
 assert.equal(get("#skipCodeInput").checked, false);
 assert.equal(get("#skipCodeInput").disabled, false);
 assert.deepEqual(formats.filter((input) => input.checked).map((input) => input.value), ["excel"]);
@@ -231,9 +258,32 @@ async function testAsyncSelection() {
   assert.equal(evaluate("state.sourceMode"), "link");
   assert.equal(evaluate("state.activeTask"), null);
   assert.equal(get("#sourceLink").value, "");
+  assert.equal(get("#caseScopeInput").value, "all");
+  assert.equal(get(".advanced-options").open, true);
 }
 
-testAsyncSelection().then(() => {
+async function testScopeSubmission() {
+  let submitted;
+  context.apiRequest = async (url, options) => {
+    assert.equal(url, "/api/generate");
+    submitted = JSON.parse(options.body);
+    throw new Error("Stop after capturing submission");
+  };
+  for (const scope of ["all", "core"]) {
+    context.resetGenerationForm();
+    context.setSourceMode("text", { focus: false });
+    get("#sourceText").value = "订单审批需求";
+    get("#caseScopeInput").value = scope;
+    await context.submitGeneration({ preventDefault() {} });
+    assert.equal(submitted.case_scope, scope);
+    assert.equal(get("#caseScopeInput").value, scope, "failed submissions preserve the selected scope");
+  }
+  context.restoreTaskForm({ ...completedTask, request: {} });
+  assert.equal(get("#caseScopeInput").value, "all", "old tasks default to all cases");
+  assert.equal(get(".advanced-options").open, true);
+}
+
+testScopeSubmission().then(testAsyncSelection).then(() => {
   console.log("Web UI regression checks passed: titles, pipeline stages, defaults, reset, history restore, draft protection and stale responses");
 }).catch((error) => {
   console.error(error);
